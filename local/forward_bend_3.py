@@ -25,8 +25,9 @@ straight_knee_threshold: 140
 hold_duration: 2.0          # seconds
 finger_px_threshold: 60     # initial, авто‑тюнинг включён
 results_dir: results
-save_format: gif            # gif | mp4 | png
+save_format: mp4            # gif | mp4 | png
 log_file: monitor.log
+output_duration: 3.0          # seconds length
 ------------------------------------------------
 CLI‑параметры перекрывают YAML → значения по умолчанию.
 """
@@ -139,10 +140,14 @@ class ForwardBendMonitor:
         self.state = "WAIT_START"  # WAIT_START → HOLD → DONE
         self.hold_start: float | None = None
         self.fps = 30  # target FPS, используется для видеобуфера
-        self.buffer: deque[np.ndarray] = deque(maxlen=int(cfg.hold_duration * self.fps * 1.5))
+        self.output_frames = int(cfg.output_duration * self.fps)
+        self.buffer: deque[np.ndarray] = deque(maxlen=int(cfg.output_duration * self.fps * 1.5))
         self.auto_thresh_samples: list[float] = []
         self.auto_calibrated = False
         self.finger_px_threshold = cfg.finger_px_threshold
+        self.output_frames = int(cfg.output_duration * self.fps)
+        self.wrist_ref_y = None  # для контроля неподвижности руки
+        self.wrist_tolerance = 20  # px допуск движения
         self._init_video()
         self._init_logger()
         self.body = Wholebody(mode="lightweight", backend=cfg.backend, device=cfg.device)
@@ -173,6 +178,9 @@ class ForwardBendMonitor:
 
     # ----- Core helpers -----
     def _save_clip(self, frames: list[np.ndarray], prefix: str):
+        # Берём только последние output_duration секунд
+        if len(frames) > self.output_frames:
+            frames = frames[-self.output_frames:]
         ts = datetime.now().strftime("%Y‑%m‑%d_%H‑%M‑%S")
         out_dir = Path(self.cfg.results_dir)
         out_dir.mkdir(exist_ok=True, parents=True)
@@ -250,6 +258,10 @@ class ForwardBendMonitor:
                 kps_s, scr_s = self.body(frm_s)
                 if np.ndim(kps_s) == 3:
                     kps_s, scr_s = kps_s[0], scr_s[0]
+
+                # Нарисуем скелет на боковом кадре
+                draw_skeleton_safe(frm_s, kps_s, scr_s, self.cfg.kpt_threshold)
+
                 l_ang, r_ang = knees_angles(scr_s, kps_s, self.cfg.kpt_threshold)
                 knees_ok = False
                 if (l_ang is not None) and (r_ang is not None):
@@ -263,6 +275,13 @@ class ForwardBendMonitor:
                     cv2.putText(frm_s, f"RK:{r_ang:.0f}", (10, 130), cv2.FONT_HERSHEY_SIMPLEX,
                                 0.7, (0, 255, 0) if r_ang >= self.cfg.straight_knee_threshold else (0, 0, 255), 2)
 
+                # Проверка, что видна хотя бы одна стопа
+                foot_ok = False
+                if (LEFT_ANKLE < len(scr_s) and scr_s[LEFT_ANKLE] > self.cfg.kpt_threshold):
+                    foot_ok = True
+                elif (RIGHT_ANKLE < len(scr_s) and scr_s[RIGHT_ANKLE] > self.cfg.kpt_threshold):
+                    foot_ok = True
+
                 # Front
                 kps_f, scr_f = self.body(frm_f)
                 if np.ndim(kps_f) == 3:
@@ -270,17 +289,31 @@ class ForwardBendMonitor:
                 draw_skeleton_safe(frm_f, kps_f, scr_f, self.cfg.kpt_threshold)
                 hands_ok = self._fingers_ok(scr_f, kps_f, frm_f)
 
+                # Координаты запястий для контроля неподвижности
+                curr_wrist_y = None
+                if LEFT_WRIST < len(scr_f) and scr_f[LEFT_WRIST] > self.cfg.kpt_threshold:
+                    curr_wrist_y = kps_f[LEFT_WRIST][1]
+                elif RIGHT_WRIST < len(scr_f) and scr_f[RIGHT_WRIST] > self.cfg.kpt_threshold:
+                    curr_wrist_y = kps_f[RIGHT_WRIST][1]
+
                 # FSM
                 if self.state == "WAIT_START":
-                    if knees_ok and hands_ok:
+                    if knees_ok and hands_ok and foot_ok:
                         self.state = "HOLD"
                         self.hold_start = time.time()
+                        self.wrist_ref_y = curr_wrist_y
                         play_sound(SOUND_START)
                         logging.info("Hold started")
                 elif self.state == "HOLD":
-                    if not knees_ok or not hands_ok:
+                    wrist_move_ok = True
+                    if self.wrist_ref_y is not None and curr_wrist_y is not None:
+                        if abs(curr_wrist_y - self.wrist_ref_y) > self.wrist_tolerance:
+                            wrist_move_ok = False
+
+                    if not knees_ok or not hands_ok or not foot_ok or not wrist_move_ok:
                         self.state = "WAIT_START"
                         self.hold_start = None
+                        self.wrist_ref_y = None
                         self.buffer.clear()
                         play_sound(SOUND_RESET)
                         logging.info("Hold reset")
@@ -290,10 +323,14 @@ class ForwardBendMonitor:
                         progress = min(1.0, elapsed / self.cfg.hold_duration)
                         self._draw_progress(frm_f, progress)
                         if progress >= 1.0:
-                            self.state = "DONE"
                             play_sound(SOUND_SUCCESS)
                             logging.info("Success! Saving clip…")
                             self._save_clip(list(self.buffer), "bend")
+                            # готовимся к новой попытке
+                            self.state = "WAIT_START"
+                            self.buffer.clear()
+                            self.hold_start = None
+                            logging.info("Ready for next attempt")
                 elif self.state == "DONE":
                     pass  # wait for user to quit or press R to restart
 
@@ -306,12 +343,32 @@ class ForwardBendMonitor:
                 else:
                     cv2.putText(frm_s, "Knees:BENT", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
+                if foot_ok:
+                    cv2.putText(frm_s, "Foot:VISIBLE", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+                else:
+                    cv2.putText(frm_s, "Foot:NOT", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+
                 # show windows
                 cv2.imshow("Side", frm_s)
                 cv2.imshow("Front", frm_f)
 
-                # push frames to buffer (front view, annotated)
-                self.buffer.append(frm_f.copy())
+                # ----------- Side-by-side кадр для GIF -----------
+                # Убедимся, что обе половины одинаковой высоты
+                if frm_s.shape[0] != frm_f.shape[0]:
+                    # подгоняем высоту фронт-кадра под боковой
+                    new_w = int(frm_f.shape[1] * frm_s.shape[0] / frm_f.shape[0])
+                    frm_f_resized = cv2.resize(frm_f, (new_w, frm_s.shape[0]))
+                else:
+                    frm_f_resized = frm_f
+                combined = np.hstack((frm_s, frm_f_resized))
+
+                # push combined frame to buffer
+                self.buffer.append(combined.copy())
+
+                # ----------- Таймкод -----------
+                ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+                for frame in (frm_s, frm_f):
+                    cv2.putText(frame, ts, (10, frame.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
                 key = cv2.waitKey(max(1, int(1000 / self.fps - (time.time() - t0) * 1000))) & 0xFF
                 if key == ord("q"):
@@ -339,8 +396,9 @@ def load_cfg(path: str) -> SimpleNamespace:
         hold_duration=2.0,
         finger_px_threshold=60.0,
         results_dir="results",
-        save_format="gif",
+        save_format="mp4",
         log_file="monitor.log",
+        output_duration=5.0,
     )
     if Path(path).exists():
         with open(path, "r", encoding="utf‑8") as f:
@@ -354,6 +412,7 @@ def parse_args():
     p.add_argument("--config", default="config.yaml", help="YAML config path")
     p.add_argument("--backend", choices=["onnxruntime", "torch"], help="Override backend")
     p.add_argument("--device", choices=["cpu", "cuda"], help="Override device")
+    p.add_argument("--output-duration", type=float, help="Seconds length of saved GIF/MP4")
     return p.parse_args()
 
 
@@ -364,6 +423,10 @@ def main():
         cfg.backend = args.backend
     if args.device:
         cfg.device = args.device
+    if args.output_duration:
+        cfg.output_duration = args.output_duration
+
+    # пересчитать output_frames в соответствии с новым cfg
     monitor = ForwardBendMonitor(cfg)
     monitor.run()
 

@@ -1,9 +1,8 @@
-import cv2
-import numpy as np
-from rtmlib import Body
 from enum import Enum
 
-# --- Константы и нормативы (из stages.js) ---
+import cv2
+import numpy as np
+
 stages = [
     {
         'step': 7,
@@ -35,9 +34,10 @@ stages = [
     },
 ]
 
+
 # --- Пользователь ---
 class User:
-    def __init__(self, name='KIRILL', age = 17, sex='мужской', uid=17):
+    def __init__(self, name='KIRILL', age=17, sex='мужской', uid=17):
         self.name = name
         self.age = age
         self.sex = sex
@@ -50,11 +50,13 @@ class User:
                 return stage
         return None
 
+
 # --- Параметры позы и подсчёт отжиманий ---
 class PositionEnum(Enum):
     UP = 1
     DOWN = 2
     UNKNOWN = 3
+
 
 KPT_THRESHOLD = 0.5
 MIN_LIMIT_VALUE_HIP = 160
@@ -83,7 +85,7 @@ skeleton_connections = [
 ]
 
 keypoint_colors = [
-    (0,0,255)]*5 + [(255,0,0)]*6 + [(0,255,0)]*6
+                      (0, 0, 255)] * 5 + [(255, 0, 0)] * 6 + [(0, 255, 0)] * 6
 
 
 def calculate_angle(a, b, c):
@@ -94,10 +96,12 @@ def calculate_angle(a, b, c):
     angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
     return np.degrees(angle)
 
+
 def calculate_angle_by_keypoints(scores, kp, i1, i2, i3):
     if (scores[i1] > KPT_THRESHOLD and scores[i2] > KPT_THRESHOLD and scores[i3] > KPT_THRESHOLD):
         return calculate_angle(kp[i1], kp[i2], kp[i3])
     return None
+
 
 def detected_position(angle_elbow, angle_hip):
     if angle_elbow and angle_hip:
@@ -110,6 +114,7 @@ def detected_position(angle_elbow, angle_hip):
             return PositionEnum.UP
     return PositionEnum.UNKNOWN
 
+
 def draw_skeleton(frame, keypoints, scores):
     for i, (x, y) in enumerate(keypoints):
         if scores[i] > KPT_THRESHOLD:
@@ -118,7 +123,8 @@ def draw_skeleton(frame, keypoints, scores):
         if scores[i1] > KPT_THRESHOLD and scores[i2] > KPT_THRESHOLD:
             pt1 = tuple(map(int, keypoints[i1]))
             pt2 = tuple(map(int, keypoints[i2]))
-            cv2.line(frame, pt1, pt2, (0,255,255), 2)
+            cv2.line(frame, pt1, pt2, (0, 255, 255), 2)
+
 
 def get_result(pushups, user):
     if not user.stage:
@@ -132,69 +138,3 @@ def get_result(pushups, user):
         return 'Бронза 🥉'
     else:
         return 'Не сдал ❌'
-
-def main():
-
-    user = User()
-    print(f'Ступень: {user.stage}')
-
-    # --- Модель ---
-    wholebody = Body(mode='lightweight', backend='onnxruntime', device='cpu')
-
-    # --- Камеры ---
-    cap1 = cv2.VideoCapture(0)
-    cap2 = cv2.VideoCapture(2)
-    POS_UP = PositionEnum.UP
-    POS_DOWN = PositionEnum.DOWN
-    POS_UNKNOWN = PositionEnum.UNKNOWN
-    state = POS_UNKNOWN
-    pushup_count = 0
-    positions = []
-
-    print('Нажмите Q для завершения.')
-    while True:
-        ret1, frame1 = cap1.read()
-        ret2, frame2 = cap2.read()
-        if not ret1 or not ret2:
-            print('Ошибка чтения кадров!')
-            break
-        # Можно выбрать одну из камер для анализа, либо обе (пример: только frame1)
-        frame = frame1  # или frame2, или объединить
-        keypoints, scores = wholebody(frame)
-        if isinstance(keypoints, (list, np.ndarray)) and np.array(keypoints).ndim == 3:
-            kp = keypoints[0]
-            sc = scores[0]
-        else:
-            kp = keypoints
-            sc = scores
-        # Подсчёт углов
-        left_elbow_angle = calculate_angle_by_keypoints(sc, kp, LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST)
-        left_hip_angle = calculate_angle_by_keypoints(sc, kp, LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE)
-        position = detected_position(left_elbow_angle, left_hip_angle)
-        positions.append(position)
-        # Логика подсчёта отжиманий (как в main.js)
-        if position == POS_UNKNOWN:
-            pass
-        elif state == POS_UNKNOWN and position == POS_UP:
-            state = POS_UP
-        elif state == POS_UP and position == POS_DOWN:
-            state = POS_DOWN
-        elif state == POS_DOWN and position == POS_UP:
-            pushup_count += 1
-            print(f'Отжиманий: {pushup_count}')
-            state = POS_UP
-        # Визуализация
-        draw_skeleton(frame, kp, sc)
-        cv2.putText(frame, f'Push-ups: {pushup_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
-        cv2.imshow('Camera 1', frame1)
-        cv2.imshow('Camera 2', frame2)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    cap1.release()
-    cap2.release()
-    cv2.destroyAllWindows()
-    print(f'Итого отжиманий: {pushup_count}')
-    print('Результат:', get_result(pushup_count, user))
-
-if __name__ == '__main__':
-    main()

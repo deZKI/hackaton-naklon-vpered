@@ -6,7 +6,7 @@ from rtmlib import Body
 app = FastAPI()
 # 1. Раздача статических файлов
 wholebody = Body(mode='lightweight', backend='onnxruntime', device='cpu')
-from utils.lib import calculate_angle_by_keypoints, detected_position, PositionEnum  # твои функции
+from .lib import calculate_angle_by_keypoints, detected_position, PositionEnum  # твои функции
 
 @app.websocket("/ws/inference")
 async def websocket_endpoint(websocket: WebSocket):

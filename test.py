@@ -7,4 +7,4 @@ while True:
         break
     print(f"Камера найдена: {index}")
     cap.release()
-    index += 2
+    index += 1

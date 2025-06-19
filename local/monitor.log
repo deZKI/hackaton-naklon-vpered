@@ -634,3 +634,53 @@
 2025-06-19 22:06:43,031 [INFO] Hold started
 2025-06-19 22:06:43,144 [INFO] Hold reset
 2025-06-19 22:07:41,198 [INFO] Session ended
+2025-06-19 22:07:47,231 [INFO] ===== Session started =====
+2025-06-19 22:07:47,670 [INFO] Detector initialised: backend=onnxruntime, device=cuda
+2025-06-19 22:07:47,670 [INFO] ▶ Monitoring started: hold 2.0 s
+2025-06-19 22:08:11,078 [INFO] Hold started
+2025-06-19 22:08:11,208 [INFO] Hold reset
+2025-06-19 22:08:11,288 [INFO] Hold started
+2025-06-19 22:08:11,399 [INFO] Hold reset
+2025-06-19 22:08:11,510 [INFO] Finger threshold auto‑set to 40.0 px
+2025-06-19 22:08:11,511 [INFO] Hold started
+2025-06-19 22:08:13,561 [INFO] Success! Saving clip…
+2025-06-19 22:08:13,735 [INFO] Saved result to results\bend_2025-06-19_22-08-13.mp4
+2025-06-19 22:08:13,738 [INFO] Ready for next attempt
+2025-06-19 22:08:13,818 [INFO] Hold started
+2025-06-19 22:08:14,808 [INFO] Hold reset
+2025-06-19 22:08:14,923 [INFO] Hold started
+2025-06-19 22:08:15,013 [INFO] Hold reset
+2025-06-19 22:08:15,110 [INFO] Hold started
+2025-06-19 22:08:15,319 [INFO] Hold reset
+2025-06-19 22:09:39,626 [INFO] Hold started
+2025-06-19 22:09:40,048 [INFO] Hold reset
+2025-06-19 22:09:40,202 [INFO] Hold started
+2025-06-19 22:09:40,459 [INFO] Hold reset
+2025-06-19 22:09:40,553 [INFO] Hold started
+2025-06-19 22:09:42,015 [INFO] Hold reset
+2025-06-19 22:09:42,111 [INFO] Hold started
+2025-06-19 22:09:42,219 [INFO] Hold reset
+2025-06-19 22:09:42,315 [INFO] Hold started
+2025-06-19 22:09:44,392 [INFO] Success! Saving clip…
+2025-06-19 22:09:44,565 [INFO] Saved result to results\bend_2025-06-19_22-09-44.mp4
+2025-06-19 22:09:44,568 [INFO] Ready for next attempt
+2025-06-19 22:09:44,644 [INFO] Hold started
+2025-06-19 22:09:45,531 [INFO] Hold reset
+2025-06-19 22:09:45,625 [INFO] Hold started
+2025-06-19 22:09:45,835 [INFO] Hold reset
+2025-06-19 22:09:45,946 [INFO] Hold started
+2025-06-19 22:09:46,249 [INFO] Hold reset
+2025-06-19 22:09:46,363 [INFO] Hold started
+2025-06-19 22:09:46,464 [INFO] Hold reset
+2025-06-19 22:09:51,018 [INFO] Hold started
+2025-06-19 22:09:51,138 [INFO] Hold reset
+2025-06-19 22:09:51,225 [INFO] Hold started
+2025-06-19 22:09:51,322 [INFO] Hold reset
+2025-06-19 22:09:51,435 [INFO] Hold started
+2025-06-19 22:09:53,511 [INFO] Success! Saving clip…
+2025-06-19 22:09:53,701 [INFO] Saved result to results\bend_2025-06-19_22-09-53.mp4
+2025-06-19 22:09:53,706 [INFO] Ready for next attempt
+2025-06-19 22:09:53,863 [INFO] Hold started
+2025-06-19 22:09:54,534 [INFO] Hold reset
+2025-06-19 22:09:54,624 [INFO] Hold started
+2025-06-19 22:09:54,827 [INFO] Hold reset

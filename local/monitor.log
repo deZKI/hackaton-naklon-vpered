@@ -1,0 +1,31 @@
+2025-06-19 20:57:30,957 [INFO] ===== Session started =====
+2025-06-19 20:57:31,291 [INFO] Detector initialised: backend=onnxruntime, device=cuda
+2025-06-19 20:57:31,291 [INFO] ▶ Monitoring started: hold 2.0 s
+2025-06-19 20:57:32,862 [INFO] Session ended
+2025-06-19 21:00:19,093 [INFO] ===== Session started =====
+2025-06-19 21:00:19,407 [INFO] Detector initialised: backend=onnxruntime, device=cuda
+2025-06-19 21:00:19,407 [INFO] ▶ Monitoring started: hold 2.0 s
+2025-06-19 21:02:35,147 [INFO] Session ended
+2025-06-19 21:03:42,513 [INFO] ===== Session started =====
+2025-06-19 21:03:42,838 [INFO] Detector initialised: backend=onnxruntime, device=cuda
+2025-06-19 21:03:42,838 [INFO] ▶ Monitoring started: hold 2.0 s
+2025-06-19 21:04:09,748 [INFO] Session ended
+2025-06-19 21:05:33,203 [INFO] ===== Session started =====
+2025-06-19 21:05:33,534 [INFO] Detector initialised: backend=onnxruntime, device=cuda
+2025-06-19 21:05:33,534 [INFO] ▶ Monitoring started: hold 2.0 s
+2025-06-19 21:05:41,805 [INFO] Finger threshold auto‑set to 40.0 px
+2025-06-19 21:05:43,900 [INFO] Hold started
+2025-06-19 21:05:43,981 [INFO] Hold reset
+2025-06-19 21:05:45,023 [INFO] Hold started
+2025-06-19 21:05:45,118 [INFO] Hold reset
+2025-06-19 21:05:45,320 [INFO] Hold started
+2025-06-19 21:05:45,438 [INFO] Hold reset
+2025-06-19 21:05:45,948 [INFO] Hold started
+2025-06-19 21:05:46,060 [INFO] Hold reset
+2025-06-19 21:05:46,161 [INFO] Hold started
+2025-06-19 21:05:46,271 [INFO] Hold reset
+2025-06-19 21:06:48,831 [INFO] Hold started
+2025-06-19 21:06:48,931 [INFO] Hold reset
+2025-06-19 21:07:00,215 [INFO] Hold started
+2025-06-19 21:07:02,309 [INFO] Success! Saving clip…
+2025-06-19 21:07:11,397 [INFO] Saved result to results\bend_2025-06-19_21-07-02.gif

@@ -5,17 +5,23 @@ from utils.lib import calculate_angle_by_keypoints, detected_position, PositionE
     LEFT_ELBOW, LEFT_WRIST, get_result, draw_skeleton, LEFT_HIP, LEFT_KNEE  # твои функции
 
 
+import onnxruntime
+
+# Preload necessary DLLs
+onnxruntime.preload_dlls()
+
+# onnxruntime.print_debug_info()
 def main():
 
     user = User()
     print(f'Ступень: {user.stage}')
 
     # --- Модель ---
-    wholebody = Body(mode='lightweight', backend='onnxruntime', device='cpu')
+    wholebody = Body(mode='performance', backend='onnxruntime', device='cuda')
 
     # --- Камеры ---
     cap1 = cv2.VideoCapture(0)
-    cap2 = cv2.VideoCapture(2)
+    cap2 = cv2.VideoCapture(1)
     POS_UP = PositionEnum.UP
     POS_DOWN = PositionEnum.DOWN
     POS_UNKNOWN = PositionEnum.UNKNOWN

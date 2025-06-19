@@ -14,7 +14,7 @@ Forward‑Bend Monitor v2
 8. Выбор backend RTM‑детектора и fallback на CPU.
 
 Зависимости (pip install):
-    opencv‑python, numpy, pyyaml, simpleaudio, imageio, rtmlib
+    opencv‑python, numpy, pyyaml, simpleaudio, imageio, rtmlib, playsound
 
 Пример `config.yaml` рядом со скриптом:
 ------------------------------------------------
@@ -59,6 +59,12 @@ except ImportError as e:
     print("❌ Не найден rtmlib:", e)
     sys.exit(1)
 
+try:
+    import pygame
+    pygame.mixer.init()
+except ImportError:
+    pygame = None
+
 # ---------- Константы ключевых точек ----------
 RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST = 6, 8, 10
 RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE = 12, 14, 16
@@ -81,6 +87,12 @@ def play_sound(path: str):
             wave_obj.play()
         except Exception as exc:
             logging.warning("Audio playback failed: %s", exc)
+    elif ext == ".mp3" and pygame:
+        try:
+            pygame.mixer.music.load(str(p))
+            pygame.mixer.music.play()
+        except Exception as exc:
+            logging.warning("Pygame audio error: %s", exc)
 
 
 # ---------- Утилиты расчёта углов / дистанций ----------

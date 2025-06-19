@@ -37,6 +37,7 @@ import argparse
 import logging
 import os
 import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -46,19 +47,13 @@ from types import SimpleNamespace
 import cv2
 import imageio.v2 as imageio
 import numpy as np
+import pygame
+pygame.mixer.init()
 import yaml
 
-try:
-    import simpleaudio as sa  # cross‑platform WAV playback
-except ImportError:
-    sa = None  # fallback later
-
-try:
-    from rtmlib import Wholebody
-    # Будем использовать локальную версию draw_skeleton_safe (ниже)
-except ImportError as e:
-    print("❌ Не найден rtmlib:", e)
-    sys.exit(1)
+import simpleaudio as sa  # cross‑platform WAV playback
+from playsound import playsound as _playsound  # MP3
+from rtmlib import Wholebody
 
 # ---------- Константы ключевых точек ----------
 RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST = 6, 8, 10
@@ -69,19 +64,29 @@ LEFT_INDEX_MCP, LEFT_INDEX_TIP = 112, 115
 RIGHT_INDEX_MCP, RIGHT_INDEX_TIP = 91, 94
 
 # ---------- Звуки ----------
-SOUND_START, SOUND_SUCCESS, SOUND_RESET = "start.wav", "success.wav", "reset.wav"
+SOUND_START, SOUND_SUCCESS, SOUND_RESET = "start.mp3", "success.mp3", "reset.mp3"
 
 
 def play_sound(path: str):
-    if not sa:
-        return  # простой fallback (нет simpleaudio)
+    """Проиграть звук в отдельном потоке. WAV → simpleaudio, MP3 → playsound."""
     p = Path(__file__).with_name(path)
-    if p.exists():
+    if not p.exists():
+        logging.debug("Sound file not found: %s", p)
+        return
+
+    ext = p.suffix.lower()
+    if ext == ".wav" and sa:
         try:
             wave_obj = sa.WaveObject.from_wave_file(str(p))
             wave_obj.play()
         except Exception as exc:
-            logging.warning("Audio playback failed: %s", exc)
+            logging.warning("WAV playback failed: %s", exc)
+    elif ext == ".mp3" and pygame:
+        try:
+            pygame.mixer.music.load(str(p))
+            pygame.mixer.music.play()
+        except Exception as exc:
+            logging.warning("Pygame audio error: %s", exc)
 
 
 # ---------- Утилиты расчёта углов / дистанций ----------
@@ -150,7 +155,7 @@ class ForwardBendMonitor:
         self.wrist_tolerance = 20  # px допуск движения
         self._init_video()
         self._init_logger()
-        self.body = Wholebody(mode="lightweight", backend=cfg.backend, device=cfg.device)
+        self.body = Wholebody(mode="balanced", backend=cfg.backend, device=cfg.device)
         logging.info("Detector initialised: backend=%s, device=%s", cfg.backend, cfg.device)
 
     # ----- initialisation helpers -----
@@ -263,10 +268,11 @@ class ForwardBendMonitor:
                 draw_skeleton_safe(frm_s, kps_s, scr_s, self.cfg.kpt_threshold)
 
                 l_ang, r_ang = knees_angles(scr_s, kps_s, self.cfg.kpt_threshold)
-                knees_ok = False
-                if (l_ang is not None) and (r_ang is not None):
-                    knees_ok = (l_ang >= self.cfg.straight_knee_threshold) or (
-                        r_ang >= self.cfg.straight_knee_threshold)
+                knees_ok = True
+                if l_ang is not None and l_ang < self.cfg.straight_knee_threshold:
+                    knees_ok = False
+                if r_ang is not None and r_ang < self.cfg.straight_knee_threshold:
+                    knees_ok = False
                 # annotate angles
                 if l_ang is not None:
                     cv2.putText(frm_s, f"LK:{l_ang:.0f}", (10, 100), cv2.FONT_HERSHEY_SIMPLEX,
@@ -391,14 +397,14 @@ def load_cfg(path: str) -> SimpleNamespace:
     default = dict(
         backend="onnxruntime",
         device="cuda",
-        kpt_threshold=0.5,
+        kpt_threshold=0.6,
         straight_knee_threshold=140,
         hold_duration=2.0,
         finger_px_threshold=60.0,
         results_dir="results",
         save_format="mp4",
         log_file="monitor.log",
-        output_duration=5.0,
+        output_duration=60,
     )
     if Path(path).exists():
         with open(path, "r", encoding="utf‑8") as f:

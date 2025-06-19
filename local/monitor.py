@@ -15,20 +15,9 @@ import numpy as np
 from rtmlib import Wholebody
 
 from audio_utils import SOUND_RESET, SOUND_START, SOUND_SUCCESS, play_sound
-from pose_utils import (
-    LEFT_ANKLE,
-    LEFT_INDEX_MCP,
-    LEFT_INDEX_TIP,
-    LEFT_WRIST,
-    RIGHT_ANKLE,
-    RIGHT_INDEX_MCP,
-    RIGHT_INDEX_TIP,
-    RIGHT_WRIST,
-    draw_skeleton_safe,
-    knees_angles,
-)
-
 from config import MonitorConfig
+from video import DualCamera
+from pose_analyzer import PoseAnalyzer
 
 __all__ = ["ForwardBendMonitor"]
 
@@ -60,15 +49,10 @@ class ForwardBendMonitor:
         self.cfg: MonitorConfig = cfg  # сохранение типа для MyPy
         self.state: MonitorState = MonitorState.WAIT_START
         self.hold_start: float | None = None
-        # fps будет определён после открытия камеры в `_init_video`
-        self.fps: int | None = None  # заполним позже
+        # fps определяется после инициализации DualCamera
+        self.fps: int | None = None
         self.output_frames: int | None = None  # заполним позже
         self.buffer: deque[np.ndarray] | None = None  # заполним позже
-
-        # авто-калибровка распрямления пальца
-        self.auto_thresh_samples: list[float] = []
-        self.auto_calibrated = False
-        self.finger_px_threshold = cfg.finger_px_threshold
 
         # контроль движения запястья
         self.wrist_ref_y: float | None = None
@@ -77,35 +61,23 @@ class ForwardBendMonitor:
         # счётчик, используемый в состоянии POST_CAPTURE
         self._post_frames_left: int = 0
 
-        self._init_video()  # определяет self.fps
-
-        # теперь когда fps известен — создаём буфер вывода
-        self.output_frames = int(cfg.output_duration * self.fps)
-        self.buffer = deque(maxlen=int(cfg.output_duration * self.fps * 1.5))
-
         self._init_logger()
 
         self.body = Wholebody(mode=cfg.mode, backend=cfg.backend, device=cfg.device)
         logging.info("Detector initialised: backend=%s, device=%s", cfg.backend, cfg.device)
 
+        # --- Video ---
+        self.camera = DualCamera()
+        self.fps = self.camera.fps
+
+        # теперь когда fps известен — создаём буфер вывода
+        self.output_frames = int(cfg.output_duration * self.fps)
+        self.buffer = deque(maxlen=int(cfg.output_duration * self.fps * 1.5))
+
+        # --- Pose Analyzer ---
+        self.analyzer = PoseAnalyzer(self.body, self.cfg)
+
     # ----- init helpers -----
-    def _init_video(self) -> None:
-        # Cam 0 – side, Cam 1 – front
-        self.cap_side = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        self.cap_front = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-        for cap in (self.cap_side, self.cap_front):
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        if not self.cap_side.isOpened() or not self.cap_front.isOpened():
-            logging.error("Couldn't open cameras")
-            raise RuntimeError("Camera init failed")
-
-        # Попытаемся узнать fps из камеры; если не удалось — fallback к 30.
-        fps_prop = self.cap_side.get(cv2.CAP_PROP_FPS)
-        self.fps = int(fps_prop) if fps_prop and fps_prop > 0 else 30
-        if fps_prop == 0 or fps_prop is None:
-            logging.warning("Camera FPS unavailable, defaulting to 30 FPS")
-
     def _init_logger(self) -> None:
         # гарантируем, что каталог для логов существует
         Path(self.cfg.log_file).resolve().parent.mkdir(exist_ok=True, parents=True)
@@ -162,49 +134,10 @@ class ForwardBendMonitor:
             2,
         )
 
-    def _fingers_ok(self, scores: np.ndarray, kps: np.ndarray, frame: np.ndarray) -> bool:
-        ok = False
-        for mcp_idx, tip_idx, label in [
-            (LEFT_INDEX_MCP, LEFT_INDEX_TIP, "L"),
-            (RIGHT_INDEX_MCP, RIGHT_INDEX_TIP, "R"),
-        ]:
-            if tip_idx >= len(scores):
-                continue
-            if scores[mcp_idx] < self.cfg.kpt_threshold or scores[tip_idx] < self.cfg.kpt_threshold:
-                continue
-
-            dist = np.linalg.norm(np.asarray(kps[mcp_idx]) - np.asarray(kps[tip_idx]))
-            # авто-калибровка
-            if not self.auto_calibrated and len(self.auto_thresh_samples) < 30:
-                self.auto_thresh_samples.append(dist)
-                if len(self.auto_thresh_samples) == 30:
-                    median = float(np.median(self.auto_thresh_samples))
-                    self.finger_px_threshold = max(40.0, 0.8 * median)
-                    self.auto_calibrated = True
-                    logging.info("Finger threshold auto-set to %.1f px", self.finger_px_threshold)
-
-            finger_straight = dist > self.finger_px_threshold
-            color = Color.GREEN.value if finger_straight else Color.RED.value
-            cv2.line(frame, tuple(map(int, kps[mcp_idx])), tuple(map(int, kps[tip_idx])), color, 2)
-            cv2.putText(
-                frame,
-                f"{label}:{int(dist)}",
-                tuple(map(int, kps[tip_idx])),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-            )
-            if finger_straight:
-                ok = True
-        return ok
-
     # ----- video helpers -----
     def _grab_frames(self) -> tuple[bool, np.ndarray | None, np.ndarray | None]:
         """Считывает кадры из обеих камер. Возвращает (успех, side, front)."""
-        ret_s, frm_s = self.cap_side.read()
-        ret_f, frm_f = self.cap_front.read()
-        return ret_s and ret_f, frm_s, frm_f
+        return self.camera.grab()
 
     # ----- main loop -----
     def run(self) -> None:
@@ -218,19 +151,17 @@ class ForwardBendMonitor:
                     logging.error("Frame capture failed")
                     break
 
-                # ---------- Side camera processing ----------
-                kps_s, scr_s = self.body(frm_s)
-                if np.ndim(kps_s) == 3:
-                    kps_s, scr_s = kps_s[0], scr_s[0]
+                # ---------- Pose analysis ----------
+                side = self.analyzer.analyze_side(frm_s)
+                front = self.analyzer.analyze_front(frm_f)
 
-                draw_skeleton_safe(frm_s, kps_s, scr_s, self.cfg.kpt_threshold)
+                knees_ok = side.knees_ok
+                l_ang = side.l_ang
+                r_ang = side.r_ang
+                foot_ok = side.foot_ok
 
-                l_ang, r_ang = knees_angles(scr_s, kps_s, self.cfg.kpt_threshold)
-                knees_ok = True
-                if l_ang is not None and l_ang < self.cfg.straight_knee_threshold:
-                    knees_ok = False
-                if r_ang is not None and r_ang < self.cfg.straight_knee_threshold:
-                    knees_ok = False
+                hands_ok = front.hands_ok
+                curr_wrist_y = front.curr_wrist_y
 
                 # annotate angle values
                 if l_ang is not None:
@@ -253,27 +184,6 @@ class ForwardBendMonitor:
                         Color.GREEN.value if r_ang >= self.cfg.straight_knee_threshold else Color.RED.value,
                         2,
                     )
-
-                # хотя бы одна стопа должна быть видна
-                foot_ok = False
-                if LEFT_ANKLE < len(scr_s) and scr_s[LEFT_ANKLE] > self.cfg.kpt_threshold:
-                    foot_ok = True
-                elif RIGHT_ANKLE < len(scr_s) and scr_s[RIGHT_ANKLE] > self.cfg.kpt_threshold:
-                    foot_ok = True
-
-                # ---------- Front camera processing ----------
-                kps_f, scr_f = self.body(frm_f)
-                if np.ndim(kps_f) == 3:
-                    kps_f, scr_f = kps_f[0], scr_f[0]
-                draw_skeleton_safe(frm_f, kps_f, scr_f, self.cfg.kpt_threshold)
-                hands_ok = self._fingers_ok(scr_f, kps_f, frm_f)
-
-                # контроль движения запястья
-                curr_wrist_y: float | None = None
-                if LEFT_WRIST < len(scr_f) and scr_f[LEFT_WRIST] > self.cfg.kpt_threshold:
-                    curr_wrist_y = kps_f[LEFT_WRIST][1]
-                elif RIGHT_WRIST < len(scr_f) and scr_f[RIGHT_WRIST] > self.cfg.kpt_threshold:
-                    curr_wrist_y = kps_f[RIGHT_WRIST][1]
 
                 # ---------- FSM ----------
                 if self.state == MonitorState.WAIT_START:
@@ -367,8 +277,7 @@ class ForwardBendMonitor:
                     time.sleep(delay_ms / 1000.0)
 
         finally:
-            self.cap_side.release()
-            self.cap_front.release()
+            self.camera.release()
             if not self.cfg.headless:
                 cv2.destroyAllWindows()
             logging.info("Session ended") 

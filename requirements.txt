@@ -1,8 +1,11 @@
 fastapi
 uvicorn[standard]
+websockets
+
 opencv-python
 numpy
 rtmlib
 tqdm
 onnxruntime
-websockets
+pygame
+imageio

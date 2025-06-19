@@ -35,6 +35,15 @@ __all__ = ["ForwardBendMonitor"]
 # -------------------- FSM State --------------------
 
 
+class Color(Enum):
+    """BGR-цвета, используемые в приложении."""
+
+    WHITE = (255, 255, 255)
+    GREEN = (0, 255, 0)
+    RED = (0, 0, 255)
+    YELLOW = (255, 255, 0)
+
+
 class MonitorState(Enum):
     """Возможные состояния конечного автомата."""
 
@@ -139,16 +148,16 @@ class ForwardBendMonitor:
         h, w = frame.shape[:2]
         bar_w, bar_h = 300, 20
         x0, y0 = (w - bar_w) // 2, h - bar_h - 10
-        cv2.rectangle(frame, (x0, y0), (x0 + bar_w, y0 + bar_h), (255, 255, 255), 2)
+        cv2.rectangle(frame, (x0, y0), (x0 + bar_w, y0 + bar_h), Color.WHITE.value, 2)
         fill_w = int(bar_w * progress)
-        cv2.rectangle(frame, (x0, y0), (x0 + fill_w, y0 + bar_h), (0, 255, 0), -1)
+        cv2.rectangle(frame, (x0, y0), (x0 + fill_w, y0 + bar_h), Color.GREEN.value, -1)
         cv2.putText(
             frame,
             f"{int(progress * 100)}%",
             (x0 + bar_w + 10, y0 + bar_h - 3),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
-            (0, 255, 0),
+            Color.GREEN.value,
             2,
         )
 
@@ -174,7 +183,7 @@ class ForwardBendMonitor:
                     logging.info("Finger threshold auto-set to %.1f px", self.finger_px_threshold)
 
             finger_straight = dist > self.finger_px_threshold
-            color = (0, 255, 0) if finger_straight else (0, 0, 255)
+            color = Color.GREEN.value if finger_straight else Color.RED.value
             cv2.line(frame, tuple(map(int, kps[mcp_idx])), tuple(map(int, kps[tip_idx])), color, 2)
             cv2.putText(
                 frame,
@@ -224,7 +233,7 @@ class ForwardBendMonitor:
                         (10, 100),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
-                        (0, 255, 0) if l_ang >= self.cfg.straight_knee_threshold else (0, 0, 255),
+                        Color.GREEN.value if l_ang >= self.cfg.straight_knee_threshold else Color.RED.value,
                         2,
                     )
                 if r_ang is not None:
@@ -234,7 +243,7 @@ class ForwardBendMonitor:
                         (10, 130),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
-                        (0, 255, 0) if r_ang >= self.cfg.straight_knee_threshold else (0, 0, 255),
+                        Color.GREEN.value if r_ang >= self.cfg.straight_knee_threshold else Color.RED.value,
                         2,
                     )
 
@@ -307,19 +316,19 @@ class ForwardBendMonitor:
                     (10, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1,
-                    (255, 255, 0),
+                    Color.YELLOW.value,
                     2,
                 )
 
                 if knees_ok:
-                    cv2.putText(frm_s, "Knees:STRAIGHT", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(frm_s, "Knees:STRAIGHT", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.GREEN.value, 2)
                 else:
-                    cv2.putText(frm_s, "Knees:BENT", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(frm_s, "Knees:BENT", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.RED.value, 2)
 
                 if foot_ok:
-                    cv2.putText(frm_s, "Foot:VISIBLE", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.putText(frm_s, "Foot:VISIBLE", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.GREEN.value, 2)
                 else:
-                    cv2.putText(frm_s, "Foot:NOT", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(frm_s, "Foot:NOT", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.RED.value, 2)
 
                 cv2.imshow("Side", frm_s)
                 cv2.imshow("Front", frm_f)
@@ -336,7 +345,7 @@ class ForwardBendMonitor:
                 # таймкод
                 ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                 for frame in (frm_s, frm_f):
-                    cv2.putText(frame, ts, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    cv2.putText(frame, ts, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, Color.WHITE.value, 1)
 
                 # контроль FPS
                 key = cv2.waitKey(max(1, int(1000 / self.fps - (time.time() - t0) * 1000))) & 0xFF

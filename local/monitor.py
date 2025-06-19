@@ -7,6 +7,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from enum import Enum, auto
 
 import cv2
 import imageio.v2 as imageio
@@ -31,16 +32,28 @@ from pose_utils import (
 __all__ = ["ForwardBendMonitor"]
 
 
+# -------------------- FSM State --------------------
+
+
+class MonitorState(Enum):
+    """Возможные состояния конечного автомата."""
+
+    WAIT_START = auto()  # ожидаем корректной исходной позы
+    HOLD = auto()  # удерживаем позу в течение заданного времени
+    POST_CAPTURE = auto()  # записываем ещё несколько секунд после успеха
+
+
 class ForwardBendMonitor:
     """Контролёр позы наклона вперёд с двумя камерами."""
 
     def __init__(self, cfg: SimpleNamespace) -> None:
         self.cfg = cfg
-        self.state = "WAIT_START"  # WAIT_START → HOLD
+        self.state: MonitorState = MonitorState.WAIT_START
         self.hold_start: float | None = None
-        self.fps = 30
-        self.output_frames = int(cfg.output_duration * self.fps)
-        self.buffer: deque[np.ndarray] = deque(maxlen=int(cfg.output_duration * self.fps * 1.5))
+        # fps будет определён после открытия камеры в `_init_video`
+        self.fps: int | None = None  # заполним позже
+        self.output_frames: int | None = None  # заполним позже
+        self.buffer: deque[np.ndarray] | None = None  # заполним позже
 
         # авто-калибровка распрямления пальца
         self.auto_thresh_samples: list[float] = []
@@ -49,12 +62,20 @@ class ForwardBendMonitor:
 
         # контроль движения запястья
         self.wrist_ref_y: float | None = None
-        self.wrist_tolerance = 20  # px
+        self.wrist_tolerance = cfg.wrist_tolerance
 
-        self._init_video()
+        # счётчик, используемый в состоянии POST_CAPTURE
+        self._post_frames_left: int = 0
+
+        self._init_video()  # определяет self.fps
+
+        # теперь когда fps известен — создаём буфер вывода
+        self.output_frames = int(cfg.output_duration * self.fps)
+        self.buffer = deque(maxlen=int(cfg.output_duration * self.fps * 1.5))
+
         self._init_logger()
 
-        self.body = Wholebody(mode="balanced", backend=cfg.backend, device=cfg.device)
+        self.body = Wholebody(mode=cfg.mode, backend=cfg.backend, device=cfg.device)
         logging.info("Detector initialised: backend=%s, device=%s", cfg.backend, cfg.device)
 
     # ----- init helpers -----
@@ -69,7 +90,16 @@ class ForwardBendMonitor:
             logging.error("Couldn't open cameras")
             raise RuntimeError("Camera init failed")
 
+        # Попытаемся узнать fps из камеры; если не удалось — fallback к 30.
+        fps_prop = self.cap_side.get(cv2.CAP_PROP_FPS)
+        self.fps = int(fps_prop) if fps_prop and fps_prop > 0 else 30
+        if fps_prop == 0 or fps_prop is None:
+            logging.warning("Camera FPS unavailable, defaulting to 30 FPS")
+
     def _init_logger(self) -> None:
+        # гарантируем, что каталог для логов существует
+        Path(self.cfg.log_file).resolve().parent.mkdir(exist_ok=True, parents=True)
+
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s [%(levelname)s] %(message)s",
@@ -77,6 +107,7 @@ class ForwardBendMonitor:
                 logging.FileHandler(self.cfg.log_file, encoding="utf-8"),
                 logging.StreamHandler(sys.stdout),
             ],
+            force=True,
         )
         logging.info("===== Session started =====")
 
@@ -229,21 +260,21 @@ class ForwardBendMonitor:
                     curr_wrist_y = kps_f[RIGHT_WRIST][1]
 
                 # ---------- FSM ----------
-                if self.state == "WAIT_START":
+                if self.state == MonitorState.WAIT_START:
                     if knees_ok and hands_ok and foot_ok:
-                        self.state = "HOLD"
+                        self.state = MonitorState.HOLD
                         self.hold_start = time.time()
                         self.wrist_ref_y = curr_wrist_y
                         play_sound(SOUND_START)
                         logging.info("Hold started")
-                elif self.state == "HOLD":
+                elif self.state == MonitorState.HOLD:
                     wrist_move_ok = True
                     if self.wrist_ref_y is not None and curr_wrist_y is not None:
                         if abs(curr_wrist_y - self.wrist_ref_y) > self.wrist_tolerance:
                             wrist_move_ok = False
 
                     if not all([knees_ok, hands_ok, foot_ok, wrist_move_ok]):
-                        self.state = "WAIT_START"
+                        self.state = MonitorState.WAIT_START
                         self.hold_start = None
                         self.wrist_ref_y = None
                         play_sound(SOUND_RESET)
@@ -253,18 +284,26 @@ class ForwardBendMonitor:
                         progress = min(1.0, elapsed / self.cfg.hold_duration)
                         self._draw_progress(frm_f, progress)
                         if progress >= 1.0:
+                            # Успех: переходим в POST_CAPTURE, чтобы захватить ещё N кадров
                             play_sound(SOUND_SUCCESS)
-                            logging.info("Success! Saving clip…")
-                            self._save_clip(list(self.buffer), "bend")
-                            self.state = "WAIT_START"
-                            self.buffer.clear()
-                            self.hold_start = None
-                            logging.info("Ready for next attempt")
+                            self._post_frames_left = int(self.fps * self.cfg.post_capture_seconds)
+                            self.state = MonitorState.POST_CAPTURE
+                elif self.state == MonitorState.POST_CAPTURE:
+                    # продолжаем писать кадры до тех пор, пока не соберём требуемое количество
+                    self._post_frames_left -= 1
+                    if self._post_frames_left <= 0:
+                        logging.info("Saving clip after post-capture …")
+                        self._save_clip(list(self.buffer), "bend")
+                        # подготовка к следующей попытке
+                        self.buffer.clear()
+                        self.hold_start = None
+                        self.state = MonitorState.WAIT_START
+                        logging.info("Ready for next attempt")
 
                 # ---------- annotations & display ----------
                 cv2.putText(
                     frm_s,
-                    f"State:{self.state}",
+                    f"State:{self.state.name}",
                     (10, 40),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1,

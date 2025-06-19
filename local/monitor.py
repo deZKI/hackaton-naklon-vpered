@@ -6,7 +6,6 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from enum import Enum, auto
 
 import cv2
@@ -28,6 +27,8 @@ from pose_utils import (
     draw_skeleton_safe,
     knees_angles,
 )
+
+from config import MonitorConfig
 
 __all__ = ["ForwardBendMonitor"]
 
@@ -55,8 +56,8 @@ class MonitorState(Enum):
 class ForwardBendMonitor:
     """Контролёр позы наклона вперёд с двумя камерами."""
 
-    def __init__(self, cfg: SimpleNamespace) -> None:
-        self.cfg = cfg
+    def __init__(self, cfg: MonitorConfig) -> None:
+        self.cfg: MonitorConfig = cfg  # сохранение типа для MyPy
         self.state: MonitorState = MonitorState.WAIT_START
         self.hold_start: float | None = None
         # fps будет определён после открытия камеры в `_init_video`
@@ -198,6 +199,13 @@ class ForwardBendMonitor:
                 ok = True
         return ok
 
+    # ----- video helpers -----
+    def _grab_frames(self) -> tuple[bool, np.ndarray | None, np.ndarray | None]:
+        """Считывает кадры из обеих камер. Возвращает (успех, side, front)."""
+        ret_s, frm_s = self.cap_side.read()
+        ret_f, frm_f = self.cap_front.read()
+        return ret_s and ret_f, frm_s, frm_f
+
     # ----- main loop -----
     def run(self) -> None:
         logging.info("▶ Monitoring started: hold %.1f s", self.cfg.hold_duration)
@@ -205,9 +213,8 @@ class ForwardBendMonitor:
         try:
             while True:
                 t0 = time.time()
-                ret_s, frm_s = self.cap_side.read()
-                ret_f, frm_f = self.cap_front.read()
-                if not ret_s or not ret_f:
+                ok, frm_s, frm_f = self._grab_frames()
+                if not ok:
                     logging.error("Frame capture failed")
                     break
 
@@ -330,8 +337,10 @@ class ForwardBendMonitor:
                 else:
                     cv2.putText(frm_s, "Foot:NOT", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.RED.value, 2)
 
-                cv2.imshow("Side", frm_s)
-                cv2.imshow("Front", frm_f)
+                # ----- display (optional) -----
+                if not self.cfg.headless:
+                    cv2.imshow("Side", frm_s)
+                    cv2.imshow("Front", frm_f)
 
                 # side-by-side для сохранения
                 if frm_s.shape[0] != frm_f.shape[0]:
@@ -347,13 +356,19 @@ class ForwardBendMonitor:
                 for frame in (frm_s, frm_f):
                     cv2.putText(frame, ts, (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, Color.WHITE.value, 1)
 
-                # контроль FPS
-                key = cv2.waitKey(max(1, int(1000 / self.fps - (time.time() - t0) * 1000))) & 0xFF
-                if key == ord("q"):
-                    break
+                # ----- FPS / quit handling -----
+                delay_ms = max(1, int(1000 / self.fps - (time.time() - t0) * 1000))
+                if not self.cfg.headless:
+                    key = cv2.waitKey(delay_ms) & 0xFF
+                    if key == ord("q"):
+                        break
+                else:
+                    # в headless режиме просто ждём указанное время
+                    time.sleep(delay_ms / 1000.0)
 
         finally:
             self.cap_side.release()
             self.cap_front.release()
-            cv2.destroyAllWindows()
+            if not self.cfg.headless:
+                cv2.destroyAllWindows()
             logging.info("Session ended") 

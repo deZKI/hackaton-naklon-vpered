@@ -13,7 +13,7 @@ import imageio.v2 as imageio
 import numpy as np
 
 from rtmlib import Wholebody
-
+import math
 from audio_utils import SOUND_RESET, SOUND_START, SOUND_SUCCESS, play_sound
 from config import MonitorConfig
 from video import DualCamera
@@ -276,7 +276,7 @@ class ForwardBendMonitor:
                 result = (max_hand_y - top_line_y) * coef_size
                 result = 0 if result < 0 else result
 
-                cv2.putText(frm_f, str(round(result, 2)) + "sm", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                cv2.putText(frm_f, str(math.ceil(result * 10) / 10) + "sm", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1,
                             Color.GREEN.value, 2)
                 # ----- display (optional) -----
                 if not self.cfg.headless:

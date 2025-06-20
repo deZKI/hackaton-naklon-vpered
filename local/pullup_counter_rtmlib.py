@@ -5,8 +5,8 @@ import pygame
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
-import rtmlib
 from rtmlib import Wholebody
+from pose_utils import draw_skeleton_safe
 
 # Инициализация pygame для звука
 pygame.mixer.init()
@@ -77,10 +77,17 @@ class PullupCounter:
         cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8)
         angle = np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0)))
         return float(angle)
-    
+
+    def _detect(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Запускает детектор и приводит вывод к двум массивам 2-D."""
+        kps, scr = self.pose_tracker(frame)
+        if np.ndim(kps) == 3:
+            kps, scr = kps[0], scr[0]
+        return kps, scr
+
     def get_landmark_coords(self, landmarks, landmark_id: int) -> Optional[Tuple[float, float]]:
         """Получает координаты ключевой точки из rtmlib"""
-        if landmarks and len(landmarks) > landmark_id:
+        if landmarks is not None and len(landmarks) > landmark_id:
             point = landmarks[landmark_id]
             if point[2] > self.config.confidence_threshold:  # confidence score
                 return (point[0], point[1])  # x, y coordinates
@@ -88,7 +95,7 @@ class PullupCounter:
     
     def analyze_pose(self, landmarks: np.ndarray) -> dict:
         """Анализирует позу и возвращает ключевые параметры"""
-        if not landmarks or len(landmarks) < 33:  # rtmlib COCO format has 17 keypoints
+        if landmarks is None or len(landmarks) < 17:  # rtmlib COCO format has 17 keypoints
             return {}
         
         # rtmlib использует COCO формат ключевых точек
@@ -267,46 +274,6 @@ class PullupCounter:
                 self.state = PullupState.FINAL
                 self.hold_start_time = current_time
     
-    def draw_skeleton(self, frame: np.ndarray, landmarks):
-        """Отрисовывает скелет на кадре"""
-        if not landmarks or len(landmarks) < 17:
-            return
-        
-        # COCO connections для отрисовки скелета
-        connections = [
-            (0, 1), (0, 2), (1, 3), (2, 4),  # голова и руки
-            (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # плечи и руки
-            (5, 11), (6, 12), (11, 12),  # туловище
-            (11, 13), (13, 15), (12, 14), (14, 16)  # ноги
-        ]
-        
-        # Рисуем ключевые точки
-        for i, point in enumerate(landmarks):
-            if i < 17 and point[2] > self.config.confidence_threshold:
-                x, y = int(point[0]), int(point[1])
-                # Разные цвета для разных частей тела
-                if i in [0, 1, 2, 3, 4]:  # голова
-                    color = (255, 0, 0)  # красный
-                elif i in [5, 6, 7, 8, 9, 10]:  # руки
-                    color = (0, 255, 0)  # зеленый
-                elif i in [11, 12]:  # таз
-                    color = (0, 0, 255)  # синий
-                else:  # ноги
-                    color = (255, 255, 0)  # желтый
-                
-                cv2.circle(frame, (x, y), 6, color, -1)
-                cv2.circle(frame, (x, y), 6, (255, 255, 255), 2)
-        
-        # Рисуем соединения
-        for connection in connections:
-            if (connection[0] < len(landmarks) and connection[1] < len(landmarks) and
-                landmarks[connection[0]][2] > self.config.confidence_threshold and
-                landmarks[connection[1]][2] > self.config.confidence_threshold):
-                
-                pt1 = (int(landmarks[connection[0]][0]), int(landmarks[connection[0]][1]))
-                pt2 = (int(landmarks[connection[1]][0]), int(landmarks[connection[1]][1]))
-                cv2.line(frame, pt1, pt2, (255, 255, 255), 3)
-    
     def draw_info(self, frame: np.ndarray, analysis: dict):
         """Отрисовывает информацию на кадре"""
         h, w = frame.shape[:2]
@@ -321,10 +288,10 @@ class PullupCounter:
         
         # Текущее состояние
         state_colors = {
-            PullupState.INITIAL: (0, 255, 0),    # Зеленый
-            PullupState.PULLING: (0, 255, 255),  # Желтый
-            PullupState.FINAL: (0, 165, 255),    # Оранжевый
-            PullupState.LOWERING: (255, 0, 0)    # Красный
+            PullupState.INITIAL: (0, 255, 0),    # Green
+            PullupState.PULLING: (0, 255, 255),  # Yellow
+            PullupState.FINAL: (0, 165, 255),    # Orange
+            PullupState.LOWERING: (255, 0, 0)    # Red
         }
         state_color = state_colors.get(self.state, (255, 255, 255))
         cv2.putText(frame, f"State: {self.state.value}", (20, 70), 
@@ -379,23 +346,18 @@ class PullupCounter:
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Обрабатывает кадр и возвращает его с нарисованной информацией"""
         # Обрабатываем позу с помощью rtmlib
-        results = self.pose_tracker(frame)
+        landmarks, scores = self._detect(frame)
         # Получаем ключевые точки
-        landmarks = results[0]
-        # Анализируем позу
         analysis = self.analyze_pose(landmarks)
-        
+
         # Обновляем состояние
         self.update_state(analysis)
-        
         # Рисуем скелет
-        if landmarks is not None:
-            print('11')
-            self.draw_skeleton(frame, landmarks)
+        draw_skeleton_safe(frame, landmarks, scores)
         
         # Рисуем информацию
         self.draw_info(frame, analysis)
-        
+
         return frame
     
     def run(self):
@@ -414,6 +376,7 @@ class PullupCounter:
                 ret, frame = cap.read()
                 if not ret:
                     print("Error: Failed to read frame")
+                    break
 
                 # Обрабатываем кадр
                 processed_frame = self.process_frame(frame)

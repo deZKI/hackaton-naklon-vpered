@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import time
 import pygame
+import os
+from datetime import datetime
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -19,36 +21,54 @@ class PullupState(Enum):
 
 
 def draw_skeleton_safe(frame: np.ndarray, landmarks: np.ndarray, scores: np.ndarray, confidence_threshold: float = 0.6):
-    """Безопасно отрисовывает скелет на кадре"""
-    if landmarks is None or scores is None or len(landmarks) < 17 or len(scores) < 17:
+    """Безопасно отрисовывает скелет на кадре - все 133 точки"""
+    if landmarks is None or scores is None or len(landmarks) < 17:
         return
 
-    # COCO connections для отрисовки скелета
+    # Цвета для разных типов точек
+    colors = [
+        (255, 0, 0),    # красный
+        (0, 255, 0),    # зеленый
+        (0, 0, 255),    # синий
+        (255, 255, 0),  # желтый
+        (255, 0, 255),  # магента
+        (0, 255, 255),  # циан
+        (255, 128, 0),  # оранжевый
+        (128, 0, 255),  # фиолетовый
+    ]
+
+    # Рисуем все доступные ключевые точки
+    max_points = min(len(landmarks), len(scores), 133)  # Максимум 133 точки
+    
+    for i in range(max_points):
+        if scores[i] > confidence_threshold:
+            point = landmarks[i]
+            x, y = int(point[0]), int(point[1])
+            
+            # Выбираем цвет в зависимости от индекса точки
+            color = colors[i % len(colors)]
+            
+            # Специальные точки выделяем больше
+            if i == 30:  # подбородок
+                cv2.circle(frame, (x, y), 8, (255, 0, 255), -1)  # большой магентовый круг
+                cv2.putText(frame, f"30", (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 255), 1)
+            elif i in [91, 94, 112, 115]:  # точки пальцев рук
+                cv2.circle(frame, (x, y), 6, (0, 255, 255), -1)  # циановые круги для пальцев
+                cv2.putText(frame, f"{i}", (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0, 255, 255), 1)
+            elif i < 17:  # основные COCO точки
+                cv2.circle(frame, (x, y), 4, color, -1)
+                cv2.circle(frame, (x, y), 4, (255, 255, 255), 1)
+            else:  # остальные точки
+                cv2.circle(frame, (x, y), 2, color, -1)
+
+    # Рисуем основные COCO соединения
     connections = [
-        (0, 1), (0, 2), (1, 3), (2, 4),  # голова и руки
-        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # плечи и руки
+        (0, 1), (0, 2), (1, 3), (2, 4),  # голова
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # руки
         (5, 11), (6, 12), (11, 12),  # туловище
         (11, 13), (13, 15), (12, 14), (14, 16)  # ноги
     ]
-
-    # Рисуем ключевые точки
-    for i, (point, score) in enumerate(zip(landmarks, scores)):
-        if i < 17 and score > confidence_threshold:
-            x, y = int(point[0]), int(point[1])
-            # Разные цвета для разных частей тела
-            if i in [0, 1, 2, 3, 4]:  # голова
-                color = (255, 0, 0)  # красный
-            elif i in [5, 6, 7, 8, 9, 10]:  # руки
-                color = (0, 255, 0)  # зеленый
-            elif i in [11, 12]:  # таз
-                color = (0, 0, 255)  # синий
-            else:  # ноги
-                color = (255, 255, 0)  # желтый
-
-            cv2.circle(frame, (x, y), 6, color, -1)
-            cv2.circle(frame, (x, y), 6, (255, 255, 255), 2)
-
-    # Рисуем соединения
+    
     for connection in connections:
         if (connection[0] < len(landmarks) and connection[1] < len(landmarks) and
                 connection[0] < len(scores) and connection[1] < len(scores) and
@@ -56,7 +76,7 @@ def draw_skeleton_safe(frame: np.ndarray, landmarks: np.ndarray, scores: np.ndar
                 scores[connection[1]] > confidence_threshold):
             pt1 = (int(landmarks[connection[0]][0]), int(landmarks[connection[0]][1]))
             pt2 = (int(landmarks[connection[1]][0]), int(landmarks[connection[1]][1]))
-            cv2.line(frame, pt1, pt2, (255, 255, 255), 3)
+            cv2.line(frame, pt1, pt2, (255, 255, 255), 2)
 
 @dataclass
 class PullupConfig:
@@ -78,6 +98,12 @@ class PullupConfig:
     
     # Звуковые файлы
     rep_complete_sound: str = "audio/success.mp3"
+    
+    # Настройки записи видео
+    enable_video_recording: bool = True
+    video_output_dir: str = "recordings"
+    video_fps: float = 30.0
+    video_codec: str = "mp4v"  # или 'XVID'
 
 class PullupCounter:
     """Класс для подсчета повторений подтягиваний с использованием rtmlib"""
@@ -95,6 +121,11 @@ class PullupCounter:
         
         # Загружаем звук
         self.load_sound()
+        
+        # Инициализация записи видео
+        self.video_writer = None
+        self.video_frame_count = 0
+        self.video_start_time = None
     
     def load_sound(self):
         """Загружает звуковой файл"""
@@ -109,6 +140,51 @@ class PullupCounter:
             pygame.mixer.music.play()
         except:
             pass
+    
+    def start_video_recording(self, frame_width: int, frame_height: int):
+        """Начинает запись видео"""
+        if not self.config.enable_video_recording:
+            return
+        
+        # Создаем директорию для записей если её нет
+        os.makedirs(self.config.video_output_dir, exist_ok=True)
+        
+        # Генерируем имя файла с текущей датой и временем
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_filename = f"pullup_session_{timestamp}.mp4"
+        video_path = os.path.join(self.config.video_output_dir, video_filename)
+        
+        # Инициализируем VideoWriter
+        fourcc = cv2.VideoWriter_fourcc(*self.config.video_codec)
+        self.video_writer = cv2.VideoWriter(
+            video_path, 
+            fourcc, 
+            self.config.video_fps, 
+            (frame_width, frame_height)
+        )
+        
+        self.video_start_time = time.time()
+        self.video_frame_count = 0
+        
+        print(f"Started video recording: {video_path}")
+    
+    def stop_video_recording(self):
+        """Останавливает запись видео"""
+        if self.video_writer is not None:
+            self.video_writer.release()
+            self.video_writer = None
+            
+            if self.video_start_time:
+                duration = time.time() - self.video_start_time
+                print(f"Video recording stopped. Duration: {duration:.1f}s, Frames: {self.video_frame_count}")
+                self.video_start_time = None
+                self.video_frame_count = 0
+    
+    def write_video_frame(self, frame: np.ndarray):
+        """Записывает кадр в видео файл"""
+        if self.video_writer is not None and self.config.enable_video_recording:
+            self.video_writer.write(frame)
+            self.video_frame_count += 1
     
     def calculate_angle(self, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
         """Вычисляет угол между тремя точками"""
@@ -139,9 +215,13 @@ class PullupCounter:
         if landmarks is None or scores is None or len(landmarks) < 17 or len(scores) < 17:
             return {}
         
-        # rtmlib использует COCO формат ключевых точек
-        # Индексы ключевых точек в COCO формате
+        # MediaPipe индексы ключевых точек
+        # COCO базовые точки (0-16)
         NOSE = 0
+        LEFT_EYE = 1
+        RIGHT_EYE = 2
+        LEFT_EAR = 3
+        RIGHT_EAR = 4
         LEFT_SHOULDER = 5
         RIGHT_SHOULDER = 6
         LEFT_ELBOW = 7
@@ -155,7 +235,14 @@ class PullupCounter:
         LEFT_ANKLE = 15
         RIGHT_ANKLE = 16
         
-        # Получаем координаты ключевых точек
+        # MediaPipe дополнительные точки
+        CHIN = 30  # подбородок
+        LEFT_INDEX_MCP = 112   # левый указательный палец (основание)
+        LEFT_INDEX_TIP = 115   # левый указательный палец (кончик)
+        RIGHT_INDEX_MCP = 91   # правый указательный палец (основание)
+        RIGHT_INDEX_TIP = 94   # правый указательный палец (кончик)
+        
+        # Получаем координаты основных точек
         left_shoulder = self.get_landmark_coords(landmarks, scores, LEFT_SHOULDER)
         left_elbow = self.get_landmark_coords(landmarks, scores, LEFT_ELBOW)
         left_wrist = self.get_landmark_coords(landmarks, scores, LEFT_WRIST)
@@ -170,7 +257,14 @@ class PullupCounter:
         right_knee = self.get_landmark_coords(landmarks, scores, RIGHT_KNEE)
         right_ankle = self.get_landmark_coords(landmarks, scores, RIGHT_ANKLE)
         
-        nose = self.get_landmark_coords(landmarks, scores, NOSE)
+        # Получаем точку подбородка (30)
+        chin = self.get_landmark_coords(landmarks, scores, CHIN)
+        
+        # Получаем точки пальцев рук
+        left_index_mcp = self.get_landmark_coords(landmarks, scores, LEFT_INDEX_MCP)
+        left_index_tip = self.get_landmark_coords(landmarks, scores, LEFT_INDEX_TIP)
+        right_index_mcp = self.get_landmark_coords(landmarks, scores, RIGHT_INDEX_MCP)
+        right_index_tip = self.get_landmark_coords(landmarks, scores, RIGHT_INDEX_TIP)
         
         analysis = {}
         
@@ -218,8 +312,7 @@ class PullupCounter:
                          (left_hip[1] + right_hip[1]) / 2)
             
             # Вычисляем угол таза относительно вертикали
-            # Используем точку выше плеч для создания вертикальной линии
-            vertical_point = (shoulder_center[0], shoulder_center[1] - 50)  # 50 пикселей выше плеч
+            vertical_point = (shoulder_center[0], shoulder_center[1] - 50)
             
             hip_angle = self.calculate_angle(
                 np.array(vertical_point),
@@ -228,11 +321,48 @@ class PullupCounter:
             )
             analysis['hip_angle'] = hip_angle
         
-        # Определяем положение подбородка относительно плеч (приблизительно)
-        if nose and left_shoulder and right_shoulder:
-            shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
-            chin_position = nose[1]  # Подбородок примерно на уровне носа
-            analysis['chin_above_shoulders'] = chin_position < shoulder_y
+        # Проверяем положение подбородка относительно пальцев рук
+        if chin:
+            analysis['chin_position'] = chin
+            
+            # Собираем все доступные точки пальцев
+            finger_points = []
+            if left_index_mcp:
+                finger_points.append(left_index_mcp)
+            if left_index_tip:
+                finger_points.append(left_index_tip)
+            if right_index_mcp:
+                finger_points.append(right_index_mcp)
+            if right_index_tip:
+                finger_points.append(right_index_tip)
+            
+            # Проверяем, что подбородок выше всех точек пальцев
+            chin_above_fingers = True
+            if finger_points:
+                for finger_point in finger_points:
+                    if chin[1] >= finger_point[1]:  # Y координата больше = ниже на экране
+                        chin_above_fingers = False
+                        break
+                
+                # Находим самую высокую точку пальцев для сравнения
+                highest_finger_y = min(point[1] for point in finger_points)
+                analysis['chin_finger_distance'] = chin[1] - highest_finger_y
+            
+            analysis['chin_above_fingers'] = chin_above_fingers
+            analysis['finger_points_count'] = len(finger_points)
+        
+        # Определяем положение кистей рук
+        if left_wrist:
+            analysis['left_wrist_position'] = left_wrist
+        
+        if right_wrist:
+            analysis['right_wrist_position'] = right_wrist
+        
+        # Проверяем симметричность хвата
+        if left_wrist and right_wrist:
+            wrist_level_diff = abs(left_wrist[1] - right_wrist[1])
+            analysis['symmetric_grip'] = wrist_level_diff < 30
+            analysis['wrist_level_difference'] = wrist_level_diff
         
         return analysis
     
@@ -263,8 +393,8 @@ class PullupCounter:
         left_elbow_ok = analysis.get('left_elbow_angle', 180) <= self.config.final_elbow_angle_max
         right_elbow_ok = analysis.get('right_elbow_angle', 180) <= self.config.final_elbow_angle_max
         
-        # Проверяем, что подбородок над плечами
-        chin_ok = analysis.get('chin_above_shoulders', False)
+        # Проверяем, что подбородок выше пальцев рук
+        chin_ok = analysis.get('chin_above_fingers', False)
         
         # Проверяем углы в коленях (ноги должны оставаться прямыми)
         left_knee_ok = analysis.get('left_knee_angle', 180) >= self.config.knee_angle_min
@@ -320,8 +450,8 @@ class PullupCounter:
         h, w = frame.shape[:2]
         
         # Фон для текста
-        cv2.rectangle(frame, (10, 10), (450, 220), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (450, 220), (255, 255, 255), 2)
+        cv2.rectangle(frame, (10, 10), (500, 300), (0, 0, 0), -1)
+        cv2.rectangle(frame, (10, 10), (500, 300), (255, 255, 255), 2)
         
         # Счетчик повторений
         cv2.putText(frame, f"Reps: {self.rep_count}", (20, 40), 
@@ -337,6 +467,18 @@ class PullupCounter:
         state_color = state_colors.get(self.state, (255, 255, 255))
         cv2.putText(frame, f"State: {self.state.value}", (20, 70), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, state_color, 2)
+        
+        # Статус записи видео
+        if self.config.enable_video_recording:
+            if self.video_writer is not None:
+                recording_text = f"REC {self.video_frame_count} frames"
+                cv2.putText(frame, recording_text, (20, 260), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                # Красный кружок - индикатор записи
+                cv2.circle(frame, (480, 20), 8, (0, 0, 255), -1)
+            else:
+                cv2.putText(frame, "Video: Ready", (20, 260), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         # Информация об углах
         if 'left_elbow_angle' in analysis:
@@ -362,27 +504,61 @@ class PullupCounter:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, hip_color, 1)
         
         # Индикатор подбородка
-        if 'chin_above_shoulders' in analysis:
-            chin_status = "Chin Above" if analysis['chin_above_shoulders'] else "Chin Below"
-            chin_color = (0, 255, 0) if analysis['chin_above_shoulders'] else (0, 0, 255)
+        if 'chin_above_fingers' in analysis:
+            chin_status = "Chin Above Bar" if analysis['chin_above_fingers'] else "Chin Below Bar"
+            chin_color = (0, 255, 0) if analysis['chin_above_fingers'] else (0, 0, 255)
             cv2.putText(frame, chin_status, (20, 200), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, chin_color, 1)
+        
+        # Информация о симметричности хвата
+        if 'symmetric_grip' in analysis:
+            grip_status = "Grip OK" if analysis['symmetric_grip'] else "Uneven Grip"
+            grip_color = (0, 255, 0) if analysis['symmetric_grip'] else (0, 255, 255)
+            cv2.putText(frame, grip_status, (20, 220), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, grip_color, 1)
+        
+        # Разница уровня кистей
+        if 'wrist_level_difference' in analysis:
+            cv2.putText(frame, f"Wrist Diff: {analysis['wrist_level_difference']:.1f}px", (20, 240), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Информация о расстоянии подбородка до пальцев
+        if 'chin_finger_distance' in analysis:
+            distance = analysis['chin_finger_distance']
+            distance_color = (0, 255, 0) if distance < 0 else (255, 0, 0)  # зеленый если подбородок выше
+            cv2.putText(frame, f"Chin-Finger: {distance:.1f}px", (250, 240), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, distance_color, 1)
+        
+        if 'finger_points_count' in analysis:
+            cv2.putText(frame, f"Finger points: {analysis['finger_points_count']}", (250, 260), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Визуальные индикаторы на изображении
+        # Рисуем точку подбородка
+        if 'chin_position' in analysis:
+            chin_x, chin_y = int(analysis['chin_position'][0]), int(analysis['chin_position'][1])
+            cv2.circle(frame, (chin_x, chin_y), 10, (255, 0, 255), 3)
+            cv2.putText(frame, "Chin (30)", (chin_x + 15, chin_y), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
         
         # Инструкции
         instructions = [
             "Instructions:",
             "1. Stand under the bar",
-            "2. Grab the bar",
+            "2. Grab the bar evenly",
             "3. Straighten arms and legs",
             "4. Keep body straight",
-            "5. Pull up to chin over bar",
-            "6. Lower to starting position"
+            "5. Pull chin above bar level",
+            "6. Hold for 0.5 seconds",
+            "7. Lower to starting position",
+            "",
+            "Controls: 'r' - start/stop recording, 'q' - quit"
         ]
         
         for i, instruction in enumerate(instructions):
-            y_pos = h - 180 + i * 20
-            cv2.putText(frame, instruction, (w - 400, y_pos), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            y_pos = h - 220 + i * 20
+            cv2.putText(frame, instruction, (w - 500, y_pos), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
     
     def process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Обрабатывает кадр и возвращает его с нарисованной информацией"""
@@ -409,7 +585,12 @@ class PullupCounter:
             print("Error: Failed to open camera")
             return
         
+        # Получаем размеры кадра
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
         print("Starting pullup counter (rtmlib)...")
+        print("Press 'r' to start/stop video recording")
         print("Press 'q' to exit")
         
         try:
@@ -422,17 +603,31 @@ class PullupCounter:
                 # Обрабатываем кадр
                 processed_frame = self.process_frame(frame)
                 
+                # Записываем кадр в видео если запись активна
+                self.write_video_frame(processed_frame)
+                
                 # Показываем результат
                 cv2.imshow('Pullup Counter (rtmlib)', processed_frame)
                 
                 # Проверяем нажатие клавиши
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
                     break
+                elif key == ord('r'):
+                    # Переключаем запись видео
+                    if self.video_writer is None:
+                        self.start_video_recording(frame_width, frame_height)
+                    else:
+                        self.stop_video_recording()
                 
         finally:
+            # Останавливаем запись видео если она активна
+            self.stop_video_recording()
             cap.release()
             cv2.destroyAllWindows()
             print(f"Finished. Total reps completed: {self.rep_count}")
+            if self.config.enable_video_recording:
+                print(f"Video recordings saved in: {self.config.video_output_dir}/")
 
 def main():
     """Главная функция"""

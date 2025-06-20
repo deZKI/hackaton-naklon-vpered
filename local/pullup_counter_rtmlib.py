@@ -6,7 +6,6 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from rtmlib import Wholebody
-from pose_utils import draw_skeleton_safe
 
 # Инициализация pygame для звука
 pygame.mixer.init()
@@ -17,6 +16,47 @@ class PullupState(Enum):
     PULLING = "pulling"      # Подтягивание
     FINAL = "final"          # Финальное положение
     LOWERING = "lowering"    # Опускание
+
+
+def draw_skeleton_safe(frame: np.ndarray, landmarks: np.ndarray, scores: np.ndarray, confidence_threshold: float = 0.6):
+    """Безопасно отрисовывает скелет на кадре"""
+    if landmarks is None or scores is None or len(landmarks) < 17 or len(scores) < 17:
+        return
+
+    # COCO connections для отрисовки скелета
+    connections = [
+        (0, 1), (0, 2), (1, 3), (2, 4),  # голова и руки
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # плечи и руки
+        (5, 11), (6, 12), (11, 12),  # туловище
+        (11, 13), (13, 15), (12, 14), (14, 16)  # ноги
+    ]
+
+    # Рисуем ключевые точки
+    for i, (point, score) in enumerate(zip(landmarks, scores)):
+        if i < 17 and score > confidence_threshold:
+            x, y = int(point[0]), int(point[1])
+            # Разные цвета для разных частей тела
+            if i in [0, 1, 2, 3, 4]:  # голова
+                color = (255, 0, 0)  # красный
+            elif i in [5, 6, 7, 8, 9, 10]:  # руки
+                color = (0, 255, 0)  # зеленый
+            elif i in [11, 12]:  # таз
+                color = (0, 0, 255)  # синий
+            else:  # ноги
+                color = (255, 255, 0)  # желтый
+
+            cv2.circle(frame, (x, y), 6, color, -1)
+            cv2.circle(frame, (x, y), 6, (255, 255, 255), 2)
+
+    # Рисуем соединения
+    for connection in connections:
+        if (connection[0] < len(landmarks) and connection[1] < len(landmarks) and
+                connection[0] < len(scores) and connection[1] < len(scores) and
+                scores[connection[0]] > confidence_threshold and
+                scores[connection[1]] > confidence_threshold):
+            pt1 = (int(landmarks[connection[0]][0]), int(landmarks[connection[0]][1]))
+            pt2 = (int(landmarks[connection[1]][0]), int(landmarks[connection[1]][1]))
+            cv2.line(frame, pt1, pt2, (255, 255, 255), 3)
 
 @dataclass
 class PullupConfig:
@@ -85,17 +125,18 @@ class PullupCounter:
             kps, scr = kps[0], scr[0]
         return kps, scr
 
-    def get_landmark_coords(self, landmarks, landmark_id: int) -> Optional[Tuple[float, float]]:
+    def get_landmark_coords(self, landmarks, scores, landmark_id: int) -> Optional[Tuple[float, float]]:
         """Получает координаты ключевой точки из rtmlib"""
-        if landmarks is not None and len(landmarks) > landmark_id:
-            point = landmarks[landmark_id]
-            if point[2] > self.config.confidence_threshold:  # confidence score
+        if (landmarks is not None and scores is not None and 
+            len(landmarks) > landmark_id and len(scores) > landmark_id):
+            if scores[landmark_id] > self.config.confidence_threshold:  # confidence score
+                point = landmarks[landmark_id]
                 return (point[0], point[1])  # x, y coordinates
         return None
     
-    def analyze_pose(self, landmarks: np.ndarray) -> dict:
+    def analyze_pose(self, landmarks: np.ndarray, scores: np.ndarray) -> dict:
         """Анализирует позу и возвращает ключевые параметры"""
-        if landmarks is None or len(landmarks) < 17:  # rtmlib COCO format has 17 keypoints
+        if landmarks is None or scores is None or len(landmarks) < 17 or len(scores) < 17:
             return {}
         
         # rtmlib использует COCO формат ключевых точек
@@ -115,21 +156,21 @@ class PullupCounter:
         RIGHT_ANKLE = 16
         
         # Получаем координаты ключевых точек
-        left_shoulder = self.get_landmark_coords(landmarks, LEFT_SHOULDER)
-        left_elbow = self.get_landmark_coords(landmarks, LEFT_ELBOW)
-        left_wrist = self.get_landmark_coords(landmarks, LEFT_WRIST)
-        left_hip = self.get_landmark_coords(landmarks, LEFT_HIP)
-        left_knee = self.get_landmark_coords(landmarks, LEFT_KNEE)
-        left_ankle = self.get_landmark_coords(landmarks, LEFT_ANKLE)
+        left_shoulder = self.get_landmark_coords(landmarks, scores, LEFT_SHOULDER)
+        left_elbow = self.get_landmark_coords(landmarks, scores, LEFT_ELBOW)
+        left_wrist = self.get_landmark_coords(landmarks, scores, LEFT_WRIST)
+        left_hip = self.get_landmark_coords(landmarks, scores, LEFT_HIP)
+        left_knee = self.get_landmark_coords(landmarks, scores, LEFT_KNEE)
+        left_ankle = self.get_landmark_coords(landmarks, scores, LEFT_ANKLE)
         
-        right_shoulder = self.get_landmark_coords(landmarks, RIGHT_SHOULDER)
-        right_elbow = self.get_landmark_coords(landmarks, RIGHT_ELBOW)
-        right_wrist = self.get_landmark_coords(landmarks, RIGHT_WRIST)
-        right_hip = self.get_landmark_coords(landmarks, RIGHT_HIP)
-        right_knee = self.get_landmark_coords(landmarks, RIGHT_KNEE)
-        right_ankle = self.get_landmark_coords(landmarks, RIGHT_ANKLE)
+        right_shoulder = self.get_landmark_coords(landmarks, scores, RIGHT_SHOULDER)
+        right_elbow = self.get_landmark_coords(landmarks, scores, RIGHT_ELBOW)
+        right_wrist = self.get_landmark_coords(landmarks, scores, RIGHT_WRIST)
+        right_hip = self.get_landmark_coords(landmarks, scores, RIGHT_HIP)
+        right_knee = self.get_landmark_coords(landmarks, scores, RIGHT_KNEE)
+        right_ankle = self.get_landmark_coords(landmarks, scores, RIGHT_ANKLE)
         
-        nose = self.get_landmark_coords(landmarks, NOSE)
+        nose = self.get_landmark_coords(landmarks, scores, NOSE)
         
         analysis = {}
         
@@ -348,12 +389,12 @@ class PullupCounter:
         # Обрабатываем позу с помощью rtmlib
         landmarks, scores = self._detect(frame)
         # Получаем ключевые точки
-        analysis = self.analyze_pose(landmarks)
+        analysis = self.analyze_pose(landmarks, scores)
 
         # Обновляем состояние
         self.update_state(analysis)
         # Рисуем скелет
-        draw_skeleton_safe(frame, landmarks, scores)
+        draw_skeleton_safe(frame, landmarks, scores, self.config.confidence_threshold)
         
         # Рисуем информацию
         self.draw_info(frame, analysis)

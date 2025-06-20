@@ -249,7 +249,7 @@ class PullupCounter:
         left_hip = self.get_landmark_coords(landmarks, scores, LEFT_HIP)
         left_knee = self.get_landmark_coords(landmarks, scores, LEFT_KNEE)
         left_ankle = self.get_landmark_coords(landmarks, scores, LEFT_ANKLE)
-        
+
         right_shoulder = self.get_landmark_coords(landmarks, scores, RIGHT_SHOULDER)
         right_elbow = self.get_landmark_coords(landmarks, scores, RIGHT_ELBOW)
         right_wrist = self.get_landmark_coords(landmarks, scores, RIGHT_WRIST)
@@ -267,7 +267,10 @@ class PullupCounter:
         right_index_tip = self.get_landmark_coords(landmarks, scores, RIGHT_INDEX_TIP)
         
         analysis = {}
-        
+
+        analysis["left_knee"] = left_knee
+        analysis["left_ankle"] = left_ankle
+
         # Вычисляем углы в локтях
         if left_shoulder and left_elbow and left_wrist:
             left_elbow_angle = self.calculate_angle(
@@ -303,21 +306,11 @@ class PullupCounter:
             analysis['right_knee_angle'] = right_knee_angle
         
         # Вычисляем угол таза (между плечами и бедрами)
-        if left_shoulder and right_shoulder and left_hip and right_hip:
-            # Центр плеч
-            shoulder_center = ((left_shoulder[0] + right_shoulder[0]) / 2, 
-                              (left_shoulder[1] + right_shoulder[1]) / 2)
-            # Центр бедер
-            hip_center = ((left_hip[0] + right_hip[0]) / 2, 
-                         (left_hip[1] + right_hip[1]) / 2)
-            
-            # Вычисляем угол таза относительно вертикали
-            vertical_point = (shoulder_center[0], shoulder_center[1] - 50)
-            
+        if left_shoulder and left_hip and left_knee:
             hip_angle = self.calculate_angle(
-                np.array(vertical_point),
-                np.array(shoulder_center),
-                np.array(hip_center)
+                left_shoulder,
+                left_hip,
+                left_knee
             )
             analysis['hip_angle'] = hip_angle
         
@@ -365,10 +358,17 @@ class PullupCounter:
             analysis['wrist_level_difference'] = wrist_level_diff
         
         return analysis
-    
+
+    def is_correct_horizontal_position(self, left_knee, left_ankle):
+        if left_knee and left_ankle:
+            angle = self.calculate_angle(left_knee, left_ankle, [left_ankle[0] + 100, left_ankle[1]])
+            return 0 < angle < 60
+
+        return False
+
     def is_initial_position(self, analysis: dict) -> bool:
         """Проверяет, находится ли человек в начальном положении"""
-        if not analysis:
+        if not analysis or not self.is_correct_horizontal_position(analysis.get('left_knee'), analysis.get('left_ankle')):
             return False
         
         # Проверяем углы в локтях (должны быть близки к 180°)
@@ -382,11 +382,11 @@ class PullupCounter:
         # Проверяем угол таза (тело должно быть прямым)
         hip_ok = analysis.get('hip_angle', 180) >= self.config.hip_angle_min
         
-        return left_elbow_ok and right_elbow_ok and left_knee_ok and right_knee_ok and hip_ok
+        return left_elbow_ok and left_knee_ok and hip_ok
     
     def is_final_position(self, analysis: dict) -> bool:
         """Проверяет, находится ли человек в финальном положении"""
-        if not analysis:
+        if not analysis or not self.is_correct_horizontal_position(analysis.get('left_knee'), analysis.get('left_ankle')):
             return False
         
         # Проверяем углы в локтях (должны быть меньше 90°)
@@ -403,7 +403,7 @@ class PullupCounter:
         # Проверяем угол таза (тело должно оставаться прямым)
         hip_ok = analysis.get('hip_angle', 180) >= self.config.hip_angle_min
         
-        return left_elbow_ok and right_elbow_ok and chin_ok and left_knee_ok and right_knee_ok and hip_ok
+        return left_elbow_ok and chin_ok and left_knee_ok and hip_ok
     
     def update_state(self, analysis: dict):
         """Обновляет состояние на основе анализа позы"""
@@ -432,7 +432,7 @@ class PullupCounter:
                 # Если положение не удерживается, возвращаемся к подтягиванию
                 self.state = PullupState.PULLING
                 self.hold_start_time = None
-        
+
         elif self.state == PullupState.LOWERING:
             if self.is_initial_position(analysis):
                 # Завершили полный цикл
@@ -446,10 +446,10 @@ class PullupCounter:
         """Отрисовывает информацию на кадре"""
         h, w = frame.shape[:2]
         
-        # Фон для текста
-        cv2.rectangle(frame, (10, 10), (500, 300), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (500, 300), (255, 255, 255), 2)
-        
+        # # Фон для текста
+        # cv2.rectangle(frame, (10, 10), (500, 300), (0, 0, 0), -1)
+        # cv2.rectangle(frame, (10, 10), (500, 300), (255, 255, 255), 2)
+        #
         # Счетчик повторений
         cv2.putText(frame, f"Reps: {self.rep_count}", (20, 40), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)

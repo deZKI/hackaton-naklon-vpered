@@ -276,8 +276,8 @@ class ForwardBendMonitor:
                 result = (max_hand_y - top_line_y) * coef_size
                 result = 0 if result < 0 else result
 
-                cv2.putText(frm_f, str(round(result, 2)), (10, frm_f.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                            Color.GREEN.value, 1)
+                cv2.putText(frm_f, str(round(result, 2)) + "sm", (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            Color.GREEN.value, 2)
                 # ----- display (optional) -----
                 if not self.cfg.headless:
                     cv2.imshow("Side", frm_s)

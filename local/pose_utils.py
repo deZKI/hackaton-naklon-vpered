@@ -89,6 +89,7 @@ def draw_skeleton_safe(frame: np.ndarray, keypoints: np.ndarray, scores: np.ndar
         if scores[i] > thr:
             color = base_colors[i % len(base_colors)]
             cv2.circle(frame, (int(x), int(y)), 3, color, -1)
+            cv2.putText(frame, str(i), (int(x) + 6, int(y) + 6), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 0), 2)
 
     # линии (верхняя часть COCO)
     connections = [
@@ -116,4 +117,4 @@ def draw_skeleton_safe(frame: np.ndarray, keypoints: np.ndarray, scores: np.ndar
             if scores[i1] > thr and scores[i2] > thr:
                 pt1 = tuple(map(int, keypoints[i1]))
                 pt2 = tuple(map(int, keypoints[i2]))
-                cv2.line(frame, pt1, pt2, (0, 255, 255), 1) 
+                cv2.line(frame, pt1, pt2, (0, 255, 255), 1)

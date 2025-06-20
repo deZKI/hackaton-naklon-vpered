@@ -36,6 +36,7 @@ class SideAnalysis:
 
 @dataclass
 class FrontAnalysis:
+    high_finger: list
     kps: np.ndarray
     scores: np.ndarray
     hands_ok: bool
@@ -144,4 +145,29 @@ class PoseAnalyzer:
         elif RIGHT_WRIST < len(scr) and scr[RIGHT_WRIST] > self.cfg.kpt_threshold:
             curr_wrist_y = kps[RIGHT_WRIST][1]
 
-        return FrontAnalysis(kps, scr, hands_ok, curr_wrist_y) 
+        right_hand_indexes = list(range(113, 132))
+        max_point_right_hand = self.define_max_point_hand(kps, right_hand_indexes)
+
+        left_hand_indexes = list(range(92, 111))
+        max_point_left_hand = self.define_max_point_hand(kps, left_hand_indexes)
+
+        max_point_hand = max_point_right_hand
+        if max_point_left_hand[1] < max_point_hand[1]:
+            max_point_hand = max_point_left_hand
+
+        for i, value in enumerate(kps):
+            if value[0] == max_point_hand[0] and value[1] == max_point_hand[1]:
+                score = scr[i]
+                if score < 0.4:
+                    max_point_hand = [0, 0]
+
+        return FrontAnalysis(max_point_hand, kps, scr, hands_ok, curr_wrist_y)
+
+    def define_max_point_hand(self, kps, indexes) -> np.array:
+        hand_points = list(map(lambda index: kps[index], indexes))
+        max_point_hand = hand_points[0]
+        for point in hand_points:
+            if point[1] > max_point_hand[1]:
+                max_point_hand = point
+
+        return max_point_hand

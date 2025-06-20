@@ -255,6 +255,29 @@ class ForwardBendMonitor:
                 else:
                     cv2.putText(frm_s, "Foot:NOT", (10, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.7, Color.RED.value, 2)
 
+                # Получаем размеры изображения
+                height, width = frm_f.shape[:2]
+
+                # Задаём координаты двух горизонтальных линий
+                y1 = int(height * 0.3)  # линия на 30% от верха
+                y2 = int(height)  # линия на 70% от верха
+
+                # Рисуем линии
+                cv2.line(frm_f, (0, y1), (width, y1), color=(0, 255, 0), thickness=2)
+                cv2.line(frm_f, (0, y2), (width, y2), color=(0, 0, 255), thickness=2)
+
+                height_ruler_sm = 25
+                height_ruler_px = height * 0.7
+
+                coef_size = height_ruler_sm / height_ruler_px
+                top_line_y = height * 0.3
+                max_hand_y = front.high_finger[1]
+
+                result = (max_hand_y - top_line_y) * coef_size
+                result = 0 if result < 0 else result
+
+                cv2.putText(frm_f, str(round(result, 2)), (10, frm_f.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            Color.GREEN.value, 1)
                 # ----- display (optional) -----
                 if not self.cfg.headless:
                     cv2.imshow("Side", frm_s)

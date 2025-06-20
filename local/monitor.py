@@ -204,6 +204,7 @@ class ForwardBendMonitor:
                         self.hold_start = None
                         self.wrist_ref_y = None
                         play_sound(SOUND_RESET)
+                        self.buffer.clear()
                         logging.info("Hold reset")
                     else:
                         elapsed = time.time() - self.hold_start

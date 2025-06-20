@@ -103,6 +103,9 @@ class ForwardBendMonitor:
         if self.cfg.save_format == "gif":
             fp = out_dir / f"{prefix}_{ts}.gif"
             imageio.mimsave(fp, frames, fps=self.fps)
+            # Сохраняем финальный кадр PNG
+            png_fp = out_dir / f"{prefix}_{ts}_final.png"
+            cv2.imwrite(str(png_fp), frames[-1])
         elif self.cfg.save_format == "mp4":
             fp = out_dir / f"{prefix}_{ts}.mp4"
             h, w = frames[0].shape[:2]
@@ -111,6 +114,9 @@ class ForwardBendMonitor:
             for fr in frames:
                 vw.write(fr)
             vw.release()
+            # Сохраняем финальный кадр PNG
+            png_fp = out_dir / f"{prefix}_{ts}_final.png"
+            cv2.imwrite(str(png_fp), frames[-1])
         else:
             # fallback: сохраним первый и последний кадр PNG
             for idx, fr in enumerate((frames[0], frames[-1])):
@@ -211,6 +217,7 @@ class ForwardBendMonitor:
                         progress = min(1.0, elapsed / self.cfg.hold_duration)
                         self._draw_progress(frm_f, progress)
                         if progress >= 1.0:
+                            self._save_clip(list(self.buffer), "bend")
                             # Успех: переходим в POST_CAPTURE, чтобы захватить ещё N кадров
                             play_sound(SOUND_SUCCESS)
                             self._post_frames_left = int(self.fps * self.cfg.post_capture_seconds)
@@ -220,7 +227,7 @@ class ForwardBendMonitor:
                     self._post_frames_left -= 1
                     if self._post_frames_left <= 0:
                         logging.info("Saving clip after post-capture …")
-                        self._save_clip(list(self.buffer), "bend")
+                        # self._save_clip(list(self.buffer), "bend")
                         # подготовка к следующей попытке
                         self.buffer.clear()
                         self.hold_start = None

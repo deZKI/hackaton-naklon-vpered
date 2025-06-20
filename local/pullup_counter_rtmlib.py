@@ -85,7 +85,7 @@ class PullupConfig:
     initial_elbow_angle_min: float = 160.0  # Минимальный угол в локтях для начального положения
     final_elbow_angle_max: float = 90.0     # Максимальный угол в локтях для финального положения
     knee_angle_min: float = 160.0           # Минимальный угол в коленях (ноги прямые)
-    hip_angle_min: float = 160.0            # Минимальный угол таза (прямое положение)
+    hip_angle_min: float = 130.0            # Минимальный угол таза (прямое положение)
     
     # Пороговые значения для уверенности в ключевых точках
     confidence_threshold: float = 0.6
@@ -112,7 +112,7 @@ class PullupCounter:
         self.config = config
         
         # Инициализация rtmlib для отслеживания позы
-        self.pose_tracker = Wholebody(mode='lightweight', backend='onnxruntime', device='cpu')
+        self.pose_tracker = Wholebody(mode='lightweight', backend='onnxruntime', device='cuda')
         
         self.state = PullupState.INITIAL
         self.rep_count = 0
@@ -440,10 +440,7 @@ class PullupCounter:
                 self.play_rep_sound()
                 self.state = PullupState.INITIAL
                 self.last_rep_time = current_time
-            elif self.is_final_position(analysis):
-                # Вернулись в финальное положение
-                self.state = PullupState.FINAL
-                self.hold_start_time = current_time
+
     
     def draw_info(self, frame: np.ndarray, analysis: dict):
         """Отрисовывает информацию на кадре"""
@@ -579,8 +576,9 @@ class PullupCounter:
     
     def run(self):
         """Запускает основной цикл обработки видео"""
-        cap = cv2.VideoCapture(0)
-        
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         if not cap.isOpened():
             print("Error: Failed to open camera")
             return
